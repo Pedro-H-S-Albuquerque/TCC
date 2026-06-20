@@ -1,0 +1,55 @@
+#include <SoftwareSerial.h>
+
+// Pinos de comunicação com o módulo
+#define PIN_RX 2    // RX do Arduino <- TX do módulo
+#define PIN_TX 3    // TX do Arduino -> RX do módulo (via divisor de tensão)
+SoftwareSerial moduleSerial(PIN_RX, PIN_TX);  // RX, TX
+
+// Pinos de controle do módulo LoRa
+#define PIN_M0 4
+#define PIN_M1 5
+#define PIN_AUX 6  // Opcional, para checar estado do módulo
+
+void setModeConfiguration() {
+  // Modo 3 (Configuração): M1 = 1, M0 = 1
+  digitalWrite(PIN_M0, HIGH);
+  digitalWrite(PIN_M1, HIGH);
+  delay(50); // Aguarda o módulo alternar o modo
+}
+
+void waitModuleReady() {
+  // Aguarda o pino AUX ficar HIGH, indicando que o módulo está pronto
+  while (digitalRead(PIN_AUX) == LOW);
+  delay(10); // Pequeno tempo extra
+}
+
+void setup() {
+  // Inicializa comunicação serial com o PC
+  Serial.begin(9600);
+
+  // Inicializa os pinos de controle
+  pinMode(PIN_M0, OUTPUT);
+  pinMode(PIN_M1, OUTPUT);
+  pinMode(PIN_AUX, INPUT);
+
+  // Entra em modo de configuração
+  setModeConfiguration();
+  waitModuleReady();
+
+  // Inicializa comunicação com o módulo LoRa
+  moduleSerial.begin(9600);
+
+  Serial.println(">> Módulo em modo de CONFIGURAÇÃO. Pronto para usar com RF Setting.");
+}
+
+void loop() {
+  // Dados do PC para o módulo
+  if (Serial.available()) {   // Verifica se há dados recebidos do PC via serial
+    moduleSerial.write(Serial.read());  // Lê o byte recebido e encaminha para o módulo LoRa
+  }
+
+  // Dados do módulo para o PC
+  if (moduleSerial.available()) {   // Verifica se há dados recebidos do módulo LoRa
+    Serial.write(moduleSerial.read());  // Lê o byte recebido e encaminha para o monitor serial do PC
+  }
+}
