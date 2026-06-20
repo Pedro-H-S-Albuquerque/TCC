@@ -1,0 +1,81 @@
+#include <EBYTE.h>            // Biblioteca para controle do módulo LoRa EBYTE
+#include <Wire.h>             // Biblioteca para comunicação I2C
+#include <LiquidCrystal_I2C.h> // Biblioteca para controle do display LCD via I2C
+
+// Pinos do LoRa no ESP32
+#define PIN_RX 16   // RX do ESP32 <- TX do módulo
+#define PIN_TX 17   // TX do ESP32 -> RX do módulo
+#define PIN_M0 5    // Pino de controle de modo M0
+#define PIN_M1 18   // Pino de controle de modo M1
+#define PIN_AUX 4   // Pino para verificar estado do módulo
+
+#pragma pack(push, 1)  // Desativa o alinhamento automático de memória para garantir que a struct seja recebida sem bytes extras
+struct DATA {
+  uint32_t Count;    // Contador de pacotes recebidos (4 bytes)
+  float TensaoVcc;   // Valor da tensão recebida do transmissor (4 bytes)
+  uint8_t Checksum;  // Byte de verificação de integridade dos dados (1 byte)
+};
+#pragma pack(pop)  // Restaura o alinhamento de memória padrão
+
+DATA MyData;  // Variável que armazena os dados recebidos
+EBYTE Transceiver(&Serial2, PIN_M0, PIN_M1, PIN_AUX);  // Cria objeto do módulo LoRa utilizando a Serial2 do ESP32
+
+// LCD 20x4 no endereço I2C 0x27
+LiquidCrystal_I2C lcd(0x27, 20, 4);  // Cria objeto do LCD com endereço 0x27 e dimensões 20 colunas x 4 linhas
+
+// Calcula o checksum somando todos os bytes da struct exceto o próprio byte de checksum
+uint8_t calculateChecksum(DATA* data) {
+  uint8_t* bytes = (uint8_t*)data;  // Interpreta a struct como um array de bytes
+  uint8_t sum = 0;                  // Acumulador da soma
+  for (size_t i = 0; i < sizeof(DATA) - 1; i++) {  // Percorre todos os bytes exceto o último (Checksum)
+    sum += bytes[i];  // Acumula cada byte
+  }
+  return sum;  // Retorna a soma calculada
+}
+
+void setup() {
+  Serial2.begin(9600, SERIAL_8N1, PIN_RX, PIN_TX);  // Inicializa a Serial2 do ESP32 a 9600 bps com 8 bits de dados, sem paridade e 1 bit de parada
+
+  pinMode(PIN_M0, OUTPUT);    // Configura M0 como saída
+  pinMode(PIN_M1, OUTPUT);    // Configura M1 como saída
+  digitalWrite(PIN_M0, LOW);  // Define M0 como LOW
+  digitalWrite(PIN_M1, LOW);  // Define M1 como LOW, colocando o módulo em modo normal de operação
+
+  lcd.init();       // Inicializa o display LCD
+  lcd.backlight();  // Liga a luz de fundo do display
+  lcd.setCursor(0, 0);          // Posiciona o cursor na coluna 0, linha 0
+  lcd.print("Receptor LoRa OK"); // Exibe mensagem de inicialização no LCD
+  delay(1000);  // Aguarda 1 segundo para exibição da mensagem
+  lcd.clear();  // Limpa o display antes de iniciar a exibição dos dados
+}
+
+void loop() {
+  if (Serial2.available() >= sizeof(DATA)) {  // Verifica se há bytes suficientes disponíveis na serial para formar um pacote completo
+    uint8_t buffer[sizeof(DATA)];  // Cria um buffer temporário do tamanho da struct
+    size_t bytesRead = Serial2.readBytes(buffer, sizeof(DATA));  // Lê os bytes da serial para o buffer e armazena a quantidade lida
+
+    if (bytesRead == sizeof(DATA)) {  // Verifica se a quantidade de bytes lidos corresponde ao tamanho esperado da struct
+      memcpy(&MyData, buffer, sizeof(DATA));  // Copia os bytes do buffer para a struct de dados
+
+      uint8_t receivedChecksum = MyData.Checksum;          // Armazena o checksum recebido no pacote
+      uint8_t calculatedChecksum = calculateChecksum(&MyData); // Calcula o checksum dos dados recebidos
+
+      if (receivedChecksum == calculatedChecksum) {  // Verifica se o checksum recebido confere com o calculado
+        lcd.clear();          // Limpa o display para exibir os novos dados
+        lcd.setCursor(0, 0);  // Posiciona o cursor na coluna 0, linha 0
+        lcd.print("Pacote #: ");
+        lcd.print(MyData.Count);  // Exibe o número do pacote recebido
+
+        lcd.setCursor(0, 1);  // Posiciona o cursor na coluna 0, linha 1
+        lcd.print("Tensao Vcc: ");
+        lcd.print(MyData.TensaoVcc, 2);  // Exibe a tensão recebida com 2 casas decimais
+        lcd.print(" V");
+      } else {
+        lcd.clear();          // Limpa o display para exibir a mensagem de erro
+        lcd.setCursor(0, 0);  // Posiciona o cursor na coluna 0, linha 0
+        lcd.print("ERRO: Checksum!");  // Exibe mensagem de erro caso o checksum não confira
+      }
+    }
+  }
+  delay(10);  // Pequena pausa para evitar sobrecarga no processador
+}
