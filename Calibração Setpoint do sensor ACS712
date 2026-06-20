@@ -1,0 +1,29 @@
+#define PINO_SENSOR_CORRENTE A0  // Define o pino analógico onde o sensor ACS712 está conectado
+
+// Sensibilidade do sensor ACS712 (ex.: 5A = 0.185 V/A)
+float sensibilidade = 0.185;
+
+int lerCorrenteDC() {
+  long somaDasCorrentes = 0;  // Acumulador para a soma das leituras analógicas
+  for (int i = 0; i < 1000; i++) {  // Realiza 1000 leituras para calcular a média
+    somaDasCorrentes += analogRead(PINO_SENSOR_CORRENTE);  // Lê o valor analógico do sensor e acumula
+    delay(1);  // Aguarda 1ms entre cada leitura
+  }
+  int media = somaDasCorrentes / 1000;  // Calcula a média das 1000 leituras
+
+  return media;  // Retorna o valor do set point médio
+}
+
+void setup() {
+  Serial.begin(9600);  // Inicializa comunicação serial a 9600 bps
+
+  pinMode(PINO_SENSOR_CORRENTE, INPUT);  // Configura o pino do sensor como entrada
+
+  delay(1000);  // Aguarda 1 segundo para estabilização do sensor antes de iniciar leituras
+}
+
+void loop() {
+  Serial.print("Set point sensor de corrente: ");
+  Serial.println(lerCorrenteDC());  // Chama a função e exibe o valor inteiro do set point
+  delay(100);  // Aguarda 100ms antes da próxima leitura
+}
