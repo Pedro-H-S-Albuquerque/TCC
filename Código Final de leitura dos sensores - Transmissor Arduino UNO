@@ -1,0 +1,100 @@
+#include <SoftwareSerial.h>  // Biblioteca para comunicação serial via software
+#include "EBYTE.h"           // Biblioteca para controle do módulo LoRa EBYTE
+
+// Pinos do LoRa
+#define PIN_RX 2   // RX do Arduino <- TX do módulo
+#define PIN_TX 3   // TX do Arduino -> RX do módulo
+#define PIN_M0 4   // Pino de controle de modo M0
+#define PIN_M1 5   // Pino de controle de modo M1
+#define PIN_AUX 6  // Pino para verificar estado do módulo
+
+// Pinos dos sensores
+#define PINO_SENSOR_VCC A1       // Pino analógico onde o sensor de tensão está conectado
+#define PINO_SENSOR_CORRENTE A0  // Pino analógico onde o sensor de corrente ACS712 está conectado
+
+#pragma pack(push, 1)  // Desativa o alinhamento automático de memória para garantir que a struct seja transmitida sem bytes extras
+struct DATA {
+  uint32_t Count;      // Contador de pacotes enviados (4 bytes)
+  float TensaoVcc;     // Valor da tensão lida pelo sensor (4 bytes)
+  float CorrenteDC;    // Valor da corrente lida pelo sensor ACS712 (4 bytes)
+  uint8_t Checksum;    // Byte de verificação de integridade dos dados (1 byte)
+};
+#pragma pack(pop)  // Restaura o alinhamento de memória padrão
+
+DATA MyData;                // Variável que armazena os dados a serem transmitidos
+unsigned long LastSend = 0; // Armazena o tempo do último envio em milissegundos
+
+SoftwareSerial ESerial(PIN_RX, PIN_TX);                // Cria objeto de comunicação serial via software
+EBYTE Transceiver(&ESerial, PIN_M0, PIN_M1, PIN_AUX);  // Cria objeto do módulo LoRa com os pinos definidos
+
+// Sensibilidade do sensor ACS712 (ex.: 5A = 0.185 V/A)
+float sensibilidade = 0.185;
+
+// Calcula o checksum somando todos os bytes da struct exceto o próprio byte de checksum
+uint8_t calculateChecksum(DATA* data) {
+  uint8_t* bytes = (uint8_t*)data;  // Interpreta a struct como um array de bytes
+  uint8_t sum = 0;                  // Acumulador da soma
+  for (size_t i = 0; i < sizeof(DATA) - 1; i++) {  // Percorre todos os bytes exceto o último (Checksum)
+    sum += bytes[i];  // Acumula cada byte
+  }
+  return sum;  // Retorna a soma calculada
+}
+
+float lerTensaoVcc() {
+  int leitura = analogRead(PINO_SENSOR_VCC);  // Lê o valor analógico do sensor (0 a 1023)
+  // Divisor de tensão: entrada máx. 25V → saída 5V (fator de escala 25.0)
+  float tensao = leitura * (25.0 / 1023.0);   // Converte a leitura para tensão em volts
+  return tensao;  // Retorna o valor de tensão calculado
+}
+
+float lerCorrenteDC() {
+  long somaDasCorrentes = 0;  // Acumulador para a soma das leituras analógicas
+  for (int i = 0; i < 1000; i++) {  // Realiza 1000 leituras para calcular a média
+    somaDasCorrentes += analogRead(PINO_SENSOR_CORRENTE);  // Lê o valor analógico do sensor e acumula
+    delay(10);  // Aguarda 10ms entre cada leitura
+  }
+  int media = somaDasCorrentes / 1000;  // Calcula a média das 1000 leituras
+
+  // Converte a leitura média para corrente em amperes
+  // 504 representa o valor esperado no pino analógico com corrente zero (2.5V com ADC de 10 bits)
+  float corrente = (float)(media - 504) * (5.0 / (1023.0 * sensibilidade));
+  return corrente;  // Retorna o valor de corrente calculado em amperes
+}
+
+void setup() {
+  Serial.begin(9600);   // Inicializa comunicação serial com o PC a 9600 bps
+  ESerial.begin(9600);  // Inicializa comunicação serial com o módulo LoRa a 9600 bps
+
+  pinMode(PIN_M0, OUTPUT);       // Configura M0 como saída
+  pinMode(PIN_M1, OUTPUT);       // Configura M1 como saída
+  digitalWrite(PIN_M0, LOW);     // Define M0 como LOW
+  digitalWrite(PIN_M1, LOW);     // Define M1 como LOW, colocando o módulo em modo normal de operação
+
+  pinMode(PINO_SENSOR_VCC, INPUT);       // Configura o pino do sensor de tensão como entrada
+  pinMode(PINO_SENSOR_CORRENTE, INPUT);  // Configura o pino do sensor de corrente como entrada
+
+  delay(1000);  // Aguarda 1 segundo para estabilização do módulo e dos sensores
+  Serial.println("Transmissor LoRa - Vcc + Corrente inicializado");  // Confirma inicialização no monitor serial
+}
+
+void loop() {
+  if (millis() - LastSend > 2000) {  // Verifica se passaram 2 segundos desde o último envio
+    MyData.Count++;                               // Incrementa o contador de pacotes
+    MyData.TensaoVcc = lerTensaoVcc();            // Lê e armazena o valor atual da tensão
+    MyData.CorrenteDC = lerCorrenteDC();          // Lê e armazena o valor atual da corrente
+    MyData.Checksum = calculateChecksum(&MyData); // Calcula e armazena o checksum dos dados
+
+    if (Transceiver.SendStruct(&MyData, sizeof(MyData))) {  // Envia a struct via LoRa e verifica se foi bem sucedido
+      Serial.println(">> Dados enviados:");
+      Serial.print("Contagem: "); Serial.println(MyData.Count);                              // Exibe o contador no monitor serial
+      Serial.print("Tensao Vcc: "); Serial.print(MyData.TensaoVcc, 2); Serial.println(" V"); // Exibe a tensão com 2 casas decimais
+      Serial.print("Corrente DC: "); Serial.print(MyData.CorrenteDC, 3); Serial.println(" A"); // Exibe a corrente com 3 casas decimais
+      Serial.println("----------------------");
+    } else {
+      Serial.println("Erro no envio!");  // Exibe mensagem de erro caso o envio falhe
+    }
+
+    LastSend = millis();  // Atualiza o tempo do último envio
+  }
+  delay(10);  // Pequena pausa para evitar sobrecarga no processador
+}
